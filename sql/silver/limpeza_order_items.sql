@@ -1,15 +1,15 @@
 /* PROJETO: E-commerce ML Olist
    AUTORA: Isabella
-   OBJETIVO: Limpeza e Padronização da tabela Order Items (Bronze -> Silver)
+   OBJETIVO: Limpeza, Padronização e Tratamento de Outliers (Bronze -> Silver)
 */
 
 -- [LOG] 1. Contagem inicial da Bronze
 SELECT 'LINHAS INICIAIS (BRONZE)' as categoria, COUNT(*) as total FROM bronze.order_items_dataset;
 
--- 2. Limpeza do terreno
-DROP TABLE IF EXISTS silver.order_items;
+-- 2. Limpeza do terreno (CORRIGIDO: adicionado CASCADE para não travar na View de outliers)
+DROP TABLE IF EXISTS silver.order_items CASCADE;
 
--- 3. Criação da Silver com as regras do Contrato de Dados
+-- 3. Criação da Silver com as regras do Contrato de Dados + Winsorização
 CREATE TABLE silver.order_items AS
 WITH base_tratada AS (
     SELECT 
@@ -17,11 +17,10 @@ WITH base_tratada AS (
         order_item_id,
         product_id,
         seller_id,
-        -- Regra 1.3: Data como TIMESTAMP
         CAST(shipping_limit_date AS TIMESTAMP) as shipping_limit_date,
-        -- Regra 1.5: Tratar Nulos com Mediana (ou 0 para flag de erro)
-        COALESCE(price, 0) as price,
-        COALESCE(freight_value, 0) as freight_value,
+        COALESCE(price, 0) as price_bruto,
+        COALESCE(freight_value, 0) as freight_bruto,
+        
         -- [NOTA TÉCNICA EXIGIDA] Identificar duplicados por ordem de data
         ROW_NUMBER() OVER(
             PARTITION BY order_id, order_item_id 
@@ -35,10 +34,21 @@ SELECT
     product_id,
     seller_id,
     shipping_limit_date,
-    price,
-    freight_value
+    
+    -- WINSORIZAÇÃO DO PREÇO: Teto cravado em 277.40
+    CASE 
+        WHEN price_bruto > 277.40 THEN 277.40
+        ELSE price_bruto
+    END AS price,
+
+    -- WINSORIZAÇÃO DO FRETE: Teto cravado em 33.40
+    CASE 
+        WHEN freight_bruto > 33.40 THEN 33.40
+        ELSE freight_bruto
+    END AS freight_value
+
 FROM base_tratada
-WHERE rank_duplicado = 1 AND price > 0;           
+WHERE rank_duplicado = 1 AND price_bruto > 0;          
       
 
 -- [LOG] 4. Verificação de Sucesso 
